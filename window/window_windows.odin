@@ -1,4 +1,4 @@
-package canvas
+package window
 
 import w32 "core:sys/windows"
 import gl  "vendor:opengl"
@@ -9,15 +9,20 @@ ENABLE_VSYNC :: true
 GL_MAJOR     :: 4
 GL_MINOR     :: 5
 
-Canvas :: struct {
+Window :: struct {
+    // platform
     hwnd:  w32.HWND,
     hdc:   w32.HDC,
     hglrc: w32.HGLRC,
+
+    // non-platform
     size:  [2]i32,
     keys:  [0xff]bool,
     mkeys: [2]bool, // mouse keys 0 left 1 right
     mpos:  [2]i32,
 }
+
+WINDOW: Window
 
 fatal :: proc (msg: string) {
     title := w32.utf8_to_utf16("FATAL!")
@@ -129,9 +134,7 @@ w32_get_window_size :: proc (hwnd: w32.HWND) -> [2]i32 {
     return { w, h }
 }
 
-init :: proc (name: string, #any_int width, height: int) -> Canvas {
-    canvas: Canvas
-
+init :: proc (name: string, #any_int width, height: int) {
     load_wgl_functions()
 
     wname := w32.utf8_to_utf16(name)
@@ -181,7 +184,7 @@ init :: proc (name: string, #any_int width, height: int) -> Canvas {
     // exstyle |= w32.WS_EX_TOPMOST
 
 	// create window
-	canvas.hwnd = w32.CreateWindowExW(
+	WINDOW.hwnd = w32.CreateWindowExW(
 		dwExStyle    = exstyle,
 		lpClassName  = raw_data(wname),
 		lpWindowName = raw_data(wname),
@@ -196,10 +199,10 @@ init :: proc (name: string, #any_int width, height: int) -> Canvas {
 		lpParam      = nil,
 	)
 
-    assert(canvas.hwnd != nil, "Failed to create window")
+    assert(WINDOW.hwnd != nil, "Failed to create window")
 
-	canvas.hdc = w32.GetDC(canvas.hwnd)
-    assert(canvas.hdc != nil, fmt.tprintf("Failed to window device context [%v].", w32.GetLastError()))
+	WINDOW.hdc = w32.GetDC(WINDOW.hwnd)
+    assert(WINDOW.hdc != nil, fmt.tprintf("Failed to window device context [%v].", w32.GetLastError()))
 
 	{ 	// set pixel format for OpenGL context
 		attrib := []i32 {
@@ -225,7 +228,7 @@ init :: proc (name: string, #any_int width, height: int) -> Canvas {
 
 		format: w32.INT
 		formats: w32.UINT
-		if (!w32.wglChoosePixelFormatARB(canvas.hdc, raw_data(attrib), nil, 1, &format, &formats) || formats == 0) {
+		if (!w32.wglChoosePixelFormatARB(WINDOW.hdc, raw_data(attrib), nil, 1, &format, &formats) || formats == 0) {
 			fatal("OpenGL does not support required pixel format!")
 		}
 
@@ -233,11 +236,11 @@ init :: proc (name: string, #any_int width, height: int) -> Canvas {
 			nSize = size_of(w32.PIXELFORMATDESCRIPTOR),
 		}
 
-		if w32.DescribePixelFormat(canvas.hdc, format, size_of(desc), &desc) == 0 {
+		if w32.DescribePixelFormat(WINDOW.hdc, format, size_of(desc), &desc) == 0 {
 			fatal("Failed to describe OpenGL pixel format")
 		}
 
-		if (!w32.SetPixelFormat(canvas.hdc, format, &desc)) {
+		if (!w32.SetPixelFormat(WINDOW.hdc, format, &desc)) {
 			fatal("Cannot set OpenGL selected pixel format!")
 		}
 	} //
@@ -263,13 +266,13 @@ init :: proc (name: string, #any_int width, height: int) -> Canvas {
 
         }
 
-		canvas.hglrc = w32.wglCreateContextAttribsARB(canvas.hdc, nil, raw_data(attrib))
+		WINDOW.hglrc = w32.wglCreateContextAttribsARB(WINDOW.hdc, nil, raw_data(attrib))
 
-		if canvas.hglrc == nil {
+		if WINDOW.hglrc == nil {
 			fatal("Cannot create modern OpenGL context! OpenGL version 4.5 not supported?")
 		}
 
-		if !w32.wglMakeCurrent(canvas.hdc, canvas.hglrc) {
+		if !w32.wglMakeCurrent(WINDOW.hdc, WINDOW.hglrc) {
 			fatal("Failed to make current OpenGL context")
 		}
 
@@ -289,9 +292,9 @@ init :: proc (name: string, #any_int width, height: int) -> Canvas {
 	w32.wglSwapIntervalEXT(ENABLE_VSYNC ? 1 : 0)
 
 	// show window
-	w32.ShowWindow(canvas.hwnd, w32.SW_SHOWDEFAULT)
+	w32.ShowWindow(WINDOW.hwnd, w32.SW_SHOWDEFAULT)
 
-    canvas.size = w32_get_window_size(canvas.hwnd)
+    WINDOW.size = w32_get_window_size(WINDOW.hwnd)
 
     ///////////////////////////////
     ///////////////////////////////
@@ -307,15 +310,15 @@ init :: proc (name: string, #any_int width, height: int) -> Canvas {
     fmt.printfln("*** GL vendor: %v", gl_vendor)
     fmt.printfln("*** GL renderer: %v", gl_render)
 	fmt.printfln("*** Current Dir: '%v'", os.get_current_directory(context.temp_allocator))
-	fmt.printfln("*** Canvas Size: %v", canvas.size)
+	fmt.printfln("*** Canvas Size: %v", WINDOW.size)
 
     ///////////////////////////////
     ///////////////////////////////
-
-	return canvas
 }
 
-frame_begin :: proc (canvas: ^Canvas) {
+frame_begin :: proc () {
+
+    window := &WINDOW
 
 	// process all incoming Windows messages
 	for msg: w32.MSG; w32.PeekMessageW(&msg, nil, 0, 0, w32.PM_REMOVE); {
@@ -329,20 +332,20 @@ frame_begin :: proc (canvas: ^Canvas) {
         /////////////////////////////
 
 		// keyboard
-		case w32.WM_KEYDOWN: canvas.keys[msg.wParam] = true
-		case w32.WM_KEYUP:   canvas.keys[msg.wParam] = false
+		case w32.WM_KEYDOWN: window.keys[msg.wParam] = true
+		case w32.WM_KEYUP:   window.keys[msg.wParam] = false
 
         /////////////////////////////
 
 		// mouse
-		case w32.WM_LBUTTONDOWN: canvas.mkeys[0] = true
-		case w32.WM_LBUTTONUP:   canvas.mkeys[0] = false
+		case w32.WM_LBUTTONDOWN: window.mkeys[0] = true
+		case w32.WM_LBUTTONUP:   window.mkeys[0] = false
 
-		case w32.WM_RBUTTONDOWN: canvas.mkeys[0] = true
-		case w32.WM_RBUTTONUP:   canvas.mkeys[0] = false
+		case w32.WM_RBUTTONDOWN: window.mkeys[0] = true
+		case w32.WM_RBUTTONUP:   window.mkeys[0] = false
 
 		case w32.WM_MOUSEMOVE:
-            canvas.mpos = {
+            window.mpos = {
                 cast(i32)(msg.lParam)       & 0xFFFF,
                 cast(i32)(msg.lParam >> 16) & 0xFFFF,
             }
@@ -358,16 +361,18 @@ frame_begin :: proc (canvas: ^Canvas) {
 
     // hardcode esc to shutdown in case of debug because reasons.
     when ODIN_DEBUG {
-        if canvas.keys[w32.VK_ESCAPE] {
+        if window.keys[w32.VK_ESCAPE] {
             w32.ExitProcess(0)
         }
     }
 }
 
-frame_end :: proc (canvas: ^Canvas) {
+frame_end :: proc () {
 
-	wsize := w32_get_window_size(canvas.hwnd)
-    canvas.size = wsize
+    window := &WINDOW
+
+	wsize := w32_get_window_size(window.hwnd)
+    window.size = wsize
 
 	// window is minimized, cannot vsync - instead sleep a bit
 	if (wsize.x == 0) || (wsize.y == 0) {
@@ -377,6 +382,18 @@ frame_end :: proc (canvas: ^Canvas) {
 		}
 	}
 
-	if !w32.wglMakeCurrent(canvas.hdc, canvas.hglrc) do fatal("Failed to make current OpenGL context")
-	if !w32.SwapBuffers(canvas.hdc) do fatal("Failed to swap OpenGL buffers!")
+	if !w32.wglMakeCurrent(window.hdc, window.hglrc) do fatal("Failed to make current OpenGL context")
+	if !w32.SwapBuffers(window.hdc) do fatal("Failed to swap OpenGL buffers!")
+}
+
+set_position :: proc (#any_int x, y: i32) {
+    c := &WINDOW
+    w32.SetWindowPos(c.hwnd, w32.HWND_TOPMOST, x, y, c.size.x, c.size.y, w32.SWP_SHOWWINDOW)
+}
+
+get_size :: proc () -> [2]f32 {
+    return {
+        f32(WINDOW.size[0]),
+        f32(WINDOW.size[1]),
+    }
 }
