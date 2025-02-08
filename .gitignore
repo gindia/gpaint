@@ -1,0 +1,8 @@
+*
+!.exrc
+!.gitignore
+!canvas/
+!canvas/**
+!build.bat
+!cousine-regular.ttf
+!gpaint.odin
